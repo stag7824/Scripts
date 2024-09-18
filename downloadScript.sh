@@ -33,6 +33,9 @@ fi
 DOWNLOAD_URL="$1"
 REMOTE_FOLDER="VPS-Uploads"
 
+# Password for zip file
+ZIP_PASSWORD="123"
+
 # Extract filename from URL
 FILENAME=$(basename "${DOWNLOAD_URL%%\?*}")
 
@@ -102,9 +105,9 @@ wait $WGET_PID || { echo "Download failed."; kill "$MONITOR_PID"; exit 1; }
 # Stop the disk usage monitor
 kill "$MONITOR_PID"
 
-# Compress the file
-echo "Compressing the file..."
-zip -r "$ZIP_FILE" "$LOCAL_FILE"
+# Compress the file with password protection
+echo "Compressing the file with password..."
+zip -r -P "$ZIP_PASSWORD" "$ZIP_FILE" "$LOCAL_FILE"
 
 # Remove the original file
 rm -f "$LOCAL_FILE"
