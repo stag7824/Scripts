@@ -9,45 +9,73 @@ cleanup() {
     if [ -f "$LOCAL_FILE" ]; then
         rm -f "$LOCAL_FILE"
     fi
-    if [ -f "$ZIP_FILE" ]; then
-        rm -f "$ZIP_FILE"
+    if [ -f "$ARCHIVE_FILE" ]; then
+        rm -f "$ARCHIVE_FILE"
     fi
 }
-
-# Trap signals and errors to ensure cleanup is called
 trap cleanup EXIT INT TERM
 
+# Default settings
+ZIP_ENABLED=true
+PASSWORD_ENABLED=true
+ZIP_PASSWORD="123"  # Default password; consider changing this or prompting the user
+REMOTE_FOLDER="VPS-Uploads"
+MAX_FILE_SIZE=$((30 * 1024 * 1024 * 1024))  # 30GB
+MAX_DISK_USAGE=150  # 150GB
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -z:*)
+            ZIP_OPTION="${1#-z:}"
+            if [ "$ZIP_OPTION" = "false" ]; then
+                ZIP_ENABLED=false
+            fi
+            shift
+            ;;
+        -p:*)
+            PASSWORD_OPTION="${1#-p:}"
+            if [ "$PASSWORD_OPTION" = "false" ]; then
+                PASSWORD_ENABLED=false
+            fi
+            shift
+            ;;
+        *)
+            if [ -z "${DOWNLOAD_URL:-}" ]; then
+                DOWNLOAD_URL="$1"
+            else
+                echo "Unknown parameter or multiple URLs provided."
+                exit 1
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Check if URL is provided
+if [ -z "${DOWNLOAD_URL:-}" ]; then
+    echo "Usage: ./download_and_upload.sh [options] [URL]"
+    echo "Options:"
+    echo "  -z:true|false    Enable or disable zipping (default: true)"
+    echo "  -p:true|false    Enable or disable password protection (default: true)"
+    exit 1
+fi
+
 # Function to convert bytes to gigabytes
-function human_readable() {
+human_readable() {
     local bytes=$1
     local gib=$(awk "BEGIN {printf \"%.2f\", $bytes/1024/1024/1024}")
     echo "$gib"
 }
 
-# Check if URL is provided
-if [ $# -eq 0 ]; then
-    echo "Usage: ./download_and_upload.sh [URL]"
-    exit 1
-fi
-
-DOWNLOAD_URL="$1"
-REMOTE_FOLDER="VPS-Uploads"
-
-# Password for zip file
-ZIP_PASSWORD="123"
-
 # Extract filename from URL
 FILENAME=$(basename "${DOWNLOAD_URL%%\?*}")
-
-# Define local paths
 LOCAL_FILE="/tmp/$FILENAME"
-ZIP_FILE="$LOCAL_FILE.zip"
+ARCHIVE_FILE="$LOCAL_FILE"
 
-# Maximum allowed file size in bytes (30GB)
-MAX_FILE_SIZE=$((30 * 1024 * 1024 * 1024))
-
-# Maximum allowed disk usage in GB
-MAX_DISK_USAGE=150
+if [ "$ZIP_ENABLED" = true ]; then
+    ARCHIVE_FILE="$LOCAL_FILE.zip"
+fi
 
 # Check available disk space before downloading
 AVAILABLE_DISK_SPACE=$(df --output=avail -BG / | tail -1 | tr -dc '0-9')
@@ -57,7 +85,7 @@ if [ "$AVAILABLE_DISK_SPACE" -lt "$MAX_DISK_USAGE" ]; then
     exit 1
 fi
 
-# Check remote file size (works for HTTP/HTTPS)
+# Check remote file size
 FILE_SIZE=$(curl -sI "$DOWNLOAD_URL" | grep -i '^Content-Length' | awk '{print $2}' | tr -d '\r')
 
 if [ -z "$FILE_SIZE" ]; then
@@ -105,18 +133,23 @@ wait $WGET_PID || { echo "Download failed."; kill "$MONITOR_PID"; exit 1; }
 # Stop the disk usage monitor
 kill "$MONITOR_PID"
 
-# Compress the file with password protection
-echo "Compressing the file with password..."
-zip -r -P "$ZIP_PASSWORD" "$ZIP_FILE" "$LOCAL_FILE"
-
-# Remove the original file
-rm -f "$LOCAL_FILE"
+# Compress the file if enabled
+if [ "$ZIP_ENABLED" = true ]; then
+    echo "Compressing the file..."
+    if [ "$PASSWORD_ENABLED" = true ]; then
+        zip -r -P "$ZIP_PASSWORD" "$ARCHIVE_FILE" "$LOCAL_FILE"
+    else
+        zip -r "$ARCHIVE_FILE" "$LOCAL_FILE"
+    fi
+    # Remove the original file
+    rm -f "$LOCAL_FILE"
+fi
 
 # Upload to oneDrive using rclone
-echo "Uploading the zip file to oneDrive..."
-rclone copy "$ZIP_FILE" oneDrive:"$REMOTE_FOLDER"/
+echo "Uploading the file to oneDrive..."
+rclone copy "$ARCHIVE_FILE" oneDrive:"$REMOTE_FOLDER"/
 
-# Remove the zip file locally
-rm -f "$ZIP_FILE"
+# Remove the archive file locally
+rm -f "$ARCHIVE_FILE"
 
 echo "Process completed successfully."
